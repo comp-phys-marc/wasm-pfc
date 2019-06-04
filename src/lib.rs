@@ -123,6 +123,7 @@ mod primitives;
 mod readers;
 mod tests;
 mod validator;
+pub mod flow_mapper;
 
 #[cfg(not(feature = "std"))]
 mod std {

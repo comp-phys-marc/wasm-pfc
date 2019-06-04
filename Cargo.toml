@@ -6,14 +6,19 @@ license = "Apache-2.0 WITH LLVM-exception"
 repository = "https://github.com/yurydelendik/wasmparser.rs"
 keywords = ["parser", "WebAssembly", "wasm"]
 description = """
+autoexamples = false
 A simple event-driven library for parsing WebAssembly binary files.
 """
 exclude = ["fuzz/**/*", "tests/**/*"]
 
 [dependencies]
+bit-vec = "*"
+termcolor = "*"
 
 [dev-dependencies]
 criterion = "0.2"
+bit-vec = "*"
+termcolor = "*"
 
 [dependencies.hashmap_core]
 version = "0.1.10"
@@ -33,3 +38,15 @@ core = ["hashmap_core"]
 [[bench]]
 name = "benchmark"
 harness = false
+
+[[example]]
+name = "parallelize"
+path = "examples/parallelization/main.rs"
+
+[[example]]
+name = "simple"
+path = "examples/simple.rs"
+
+[[example]]
+name = "dump"
+path = "examples/dump.rs"

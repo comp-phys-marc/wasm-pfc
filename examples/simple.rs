@@ -34,7 +34,7 @@ fn main() {
             }
             ParserState::EndWasm => break,
             ParserState::Error(err) => panic!("Error: {:?}", err),
-            _ => ( /* println!(" Other {:?}", state); */ ),
+            _ => { println!("{:?}", state); },
         }
     }
 }

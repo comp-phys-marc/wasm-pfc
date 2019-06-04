@@ -611,7 +611,7 @@ impl<'a> ValidatingParser<'a> {
     {
         let func_body_offset = match *self.last_state() {
             ParserState::BeginFunctionBody { .. } => self.parser.current_position(),
-            _ => panic!("Invalid reader state"),
+            _ => panic!("Invalid reader state: {:?}", *self.last_state()),
         };
         self.read();
         let operator_validator = match *self.last_state() {

@@ -936,7 +936,9 @@ impl<'a> Parser<'a> {
                 }
                 self.init_expr_continuation = None;
             }
-            ParserState::BeginFunctionBody { .. } => self.read_function_body_locals()?,
+            ParserState::BeginFunctionBody { .. } => {
+                self.read_function_body_locals()?
+            },
             ParserState::FunctionBodyLocals { .. } | ParserState::CodeOperator(_) => {
                 self.read_code_operator()?
             }

@@ -72,13 +72,13 @@ If you want to use files as seeds for the fuzzer, add them to `fuzz/corpus/parse
 To test the PFC implementation:
 
 ```
-cargo run --example pfc  ./tests/pfc/accel.wasm
+cargo run --example parallelize  ./tests/parallelization/accel.wasm
 ```
 
 To create or update a WASM file, write the .wat by hand, and run wat2wasm. For example:
 
 ```
-wat2wasm tests/pfc/accel.wat -o tests/pfc/accel.wasm
+wat2wasm tests/parallelization/accel.wat -o tests/parallelization/accel.wasm
 ```
 
 wat2wasm is a part of the open source WebAssembly Binary Toolkit [wabt](https://github.com/WebAssembly/wabt).
