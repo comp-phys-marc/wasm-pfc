@@ -1,5 +1,5 @@
-//! # Node
-//! Data structures that represent a possible execution Node through a WASM program.
+//! # Parallelize
+//! Data structures that represent the possible parallel executions of portions of WASM programs.
 
 extern crate termcolor;
 extern crate print_flat_tree;
@@ -8,6 +8,7 @@ use std::env;
 use std::fs::File;
 use std::io;
 use std::io::prelude::*;
+use std::process::Command;
 use std::str;
 use std::io::Write;
 use std::collections::HashMap;
@@ -193,9 +194,10 @@ impl Node {
         let mut removed_children:Vec<usize> = Vec::new();
         let mut removed_calls:Vec<usize> = Vec::new();
         for (call, index) in self.get_calls() {
-            let child = self.get_child(index);
-            match child {
-                Some(child) => {
+            let old_child = self.get_child(index);
+            match old_child {
+                Some(mut old_child) => {
+                    let child = old_child.collapse();
                     let child_instrs = child.clone().get_instrs();
                     let old_instrs = self.get_instrs();
                     let mut new_instrs:Vec<u8> = Vec::new();
@@ -356,7 +358,17 @@ impl Mapper {
 
     fn expand_tree(&mut self, nodes:HashMap<usize, Node>) -> HashMap<usize, Node> {
         let mut tree = nodes.clone();
+        
         for (index, mut func) in nodes {
+
+            let mut stdin = io::stdin();
+            let mut input = String::new();
+            println!("Parallelize function {} (yes/no)?", index);
+            stdin.read_line(&mut input);
+            if input == "no\n" || input == "n\n" {
+                continue;
+            }
+            
             println!("Analyzing function {}...", index);
             tree.remove(&index);
             let mut path_nodes = HashMap::new();
@@ -414,6 +426,7 @@ impl Mapper {
             println!("Breaking block {} out from function {}", index, node_id);
             let block_id = self.unique_block_id();
             func.add_call(start, block_id);
+            path_nodes.insert(node_id, func.clone());
             func.add_child(block_id, self.expand_block_tree_helper(block.clone(), block_id, tree.clone(), path_nodes.clone()));
             self.functions.insert(block_id, block.clone());
         }
