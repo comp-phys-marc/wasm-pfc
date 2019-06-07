@@ -1,7 +1,7 @@
 extern crate wasmparser;
 
 use std::env;
-use wasmparser::flow_mapper;
+use wasmparser::parallelize;
 
 fn main() {
     let args = env::args().collect::<Vec<_>>();
@@ -10,12 +10,17 @@ fn main() {
         return;
     }
 
-    let mut mapper = flow_mapper::new_mapper();
+    let mut mapper = parallelize::new_mapper();
 
     println!("Analyzing {}...", args[1]);
 
     let buf: Vec<u8> = mapper.read_wasm(&args[1]).unwrap();
     let nodes = mapper.map(buf);
-    println!("{:#?}", nodes);
+
+    println!("{:#x?}", nodes);
     mapper.print_tree(nodes);
+
+    // let mut node = &nodes[&0];
+    // let collapsed_node = node.clone().collapse();
+    // println!("{:#x?}", collapsed_node);
 }

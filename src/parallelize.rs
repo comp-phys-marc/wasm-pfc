@@ -11,6 +11,7 @@ use std::io::prelude::*;
 use std::str;
 use std::io::Write;
 use std::collections::HashMap;
+use primitives::{Type, MemoryImmediate};
 use self::print_flat_tree::fmt;
 use self::termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 use crate::Operator;
@@ -19,15 +20,19 @@ use crate::operators_validator::WasmModuleResources;
 
 #[derive(Clone, Debug)]
 pub struct Node {
+    id: usize,
     instrs: Vec<u8>,
     branches: HashMap<usize, usize>,
     calls: HashMap<usize, usize>,
     start: usize,
     end: usize,
-    children: HashMap<usize, Node>
+    children: HashMap<usize, Node>,
+    constants: HashMap<usize, Type>,
+    input_variables: HashMap<usize, Type>,
+    output_variables: HashMap<usize, Type>,
+    data_couplings: HashMap<usize, usize>,
+    blocks: HashMap<usize, usize>
 }
-
-pub struct Mapper {}
 
 impl Node {
     fn default () -> Node {
@@ -35,16 +40,49 @@ impl Node {
         let branches:HashMap<usize, usize> = HashMap::new();
         let calls:HashMap<usize, usize> = HashMap::new();
         let children:HashMap<usize, Node> = HashMap::new();
+        let blocks:HashMap<usize, usize> = HashMap::new();
         let start = 0;
         let end = 0;
+        let id = 0;
+        let input_variables = HashMap::new();
+        let output_variables = HashMap::new();
+        let constants = HashMap::new();
+        let data_couplings = HashMap::new();
+
         Node {
+            id: id,
             instrs: instrs,
             branches: branches,
             calls: calls,
             start: start,
             end: end,
-            children: children
+            children: children,
+            blocks: blocks,
+            input_variables: input_variables,
+            output_variables: output_variables,
+            constants: constants,
+            data_couplings: data_couplings
         }
+    }
+
+    pub fn set_id(&mut self, id:usize) {
+        self.id = id;
+    }
+
+    pub fn add_input_variable(&mut self, ty:Type) -> usize {
+        let var_id = self.id + 0 + self.input_variables.len();
+        self.input_variables.insert(var_id, ty);
+        var_id
+    }
+
+    pub fn add_constant(&mut self, ty:Type) -> usize {
+        let var_id = self.id + 1 + self.constants.len();
+        self.constants.insert(var_id, ty);
+        var_id
+    }
+
+    pub fn add_data_coupling(&mut self, memarg:&MemoryImmediate, var_id:usize) {
+        // self.data_couplings.insert(memarg, var_id);
     }
 
     pub fn add_branch(&mut self, branch_index:usize, relative_depth:usize) {
@@ -55,12 +93,30 @@ impl Node {
         self.branches.contains_key(&branch_index)
     }
 
+    pub fn add_block(&mut self, start_index:usize, block_index:usize) {
+        self.blocks.insert(start_index, block_index);
+    }
+
+    pub fn get_blocks(&self) -> HashMap<usize, usize> {
+        self.blocks.clone()
+    }
+
     pub fn add_call(&mut self, call_index:usize, function_index:usize) {
         self.calls.insert(call_index, function_index);
     }
 
     pub fn has_call(&self, call_index:usize) -> bool {
         self.calls.contains_key(&call_index)
+    }
+
+    pub fn get_calls(&self) -> HashMap<usize, usize> {
+        self.calls.clone()
+    }
+
+    fn remove_calls(&mut self, calls:Vec<usize>) {
+        for index in calls {
+            self.calls.remove(&index);
+        }
     }
 
     pub fn set_start(&mut self, start:usize) {
@@ -87,17 +143,26 @@ impl Node {
         self.children.extend(children);
     }
 
-    pub fn add_child(&mut self, child:Node) {
-        let size = self.children.len();
-        self.children.insert(size, child);
-    }
-
-    pub fn get_calls(&self) -> HashMap<usize, usize> {
-        self.calls.clone()
+    pub fn add_child(&mut self, index:usize, child:Node) {
+        self.children.insert(index, child);
     }
 
     pub fn has_child(&self, key:usize) -> bool {
         self.children.contains_key(&key)
+    }
+
+    pub fn get_child(&self, key:usize) -> Option<Node> {
+        if self.children.contains_key(&key) {
+            Some(self.children[&key].clone())
+        } else {
+            None
+        }
+    }
+
+    fn remove_children(&mut self, children:Vec<usize>) {
+        for index in children {
+            self.children.remove(&index);
+        }
     }
 
     pub fn set_instrs(&mut self, instrs:Vec<u8>) {
@@ -106,12 +171,117 @@ impl Node {
 
     pub fn get_instrs(&mut self) -> Vec<u8> {
         self.instrs.clone()
-    } 
+    }
+
+    pub fn remove_instrs(&mut self, start:usize, end:usize) {
+        let mut new_instrs:Vec<u8> = Vec::new();
+        let old_instrs = self.get_instrs();
+        let mut i = 0;
+        while i < start {
+            new_instrs.push(old_instrs[i]);
+            i += 1;
+        }
+        i = end;
+        while i < old_instrs.len() {
+            new_instrs.push(old_instrs[i]);
+            i += 1;
+        }
+        self.set_instrs(new_instrs);
+    }
+
+    pub fn collapse(&mut self) -> Node {
+        let mut removed_children:Vec<usize> = Vec::new();
+        let mut removed_calls:Vec<usize> = Vec::new();
+        for (call, index) in self.get_calls() {
+            let child = self.get_child(index);
+            match child {
+                Some(child) => {
+                    let child_instrs = child.clone().get_instrs();
+                    let old_instrs = self.get_instrs();
+                    let mut new_instrs:Vec<u8> = Vec::new();
+                    let mut i = 0;
+                    while i < call {
+                        new_instrs.push(old_instrs[i]);
+                        i += 1;
+                    }
+                    new_instrs.append(&mut child_instrs.clone());
+                    i += child_instrs.len();
+                    while i < old_instrs.len() {
+                        new_instrs.push(old_instrs[i]);
+                        i += 1;
+                    }
+                    self.set_instrs(new_instrs);
+                    removed_children.push(index);
+                    removed_calls.push(call);
+                }
+                None => {
+                    println!("Can't collapse call {} to function {}", call, index);
+                }
+            }
+        }
+        self.remove_children(removed_children);
+        self.remove_calls(removed_calls);
+        self.clone()
+    }
+}
+
+pub struct Mapper {
+    blocks:HashMap<usize, Node>,
+    functions:HashMap<usize, Node>
 }
 
 impl Mapper {
     fn default () -> Mapper {
-        Mapper{}
+        let blocks:HashMap<usize, Node> = HashMap::new();
+        let functions:HashMap<usize, Node> = HashMap::new();
+
+        Mapper{
+            blocks: blocks,
+            functions: functions
+        }
+    }
+
+    pub fn unique_block_id(&self) -> usize {
+        let functions = self.get_functions();
+        let max = functions.keys().max();
+        let mut true_max = 0;
+        match max {
+            Some(max) => {
+                true_max = *max;
+           }
+           _ => ()
+        }
+        true_max + 1
+    }
+
+    fn add_block(&mut self, block:Node) -> usize {
+        let blocks = self.get_blocks();
+        let index = blocks.keys().max();
+        let mut insert_index = 0;
+        match index {
+            Some(index) => {
+                insert_index = *index + 1;
+           }
+           _ => ()
+        }
+        self.blocks.insert(insert_index, block);
+        insert_index
+    }
+
+    fn get_functions(&self) -> HashMap<usize, Node> {
+        self.functions.clone()
+    }
+
+    fn get_blocks(&self) -> HashMap<usize, Node> {
+        self.blocks.clone()
+    }
+
+    fn get_block(&self, index:usize) -> Node {
+        self.blocks[&index].clone()
+    }
+
+    fn remove_block(&mut self, index:usize) {
+        self.blocks.remove(&index);
     }
 
     pub fn read_wasm(&mut self, file: &str) -> io::Result<Vec<u8>> {
@@ -130,7 +300,7 @@ impl Mapper {
     }
 
     pub fn print_tree(&self, nodes:HashMap<usize, Node>) {
-        let mut indices = self.get_indices(nodes);
+        let indices = self.get_indices(nodes);
         print!("{}", fmt(&indices));
     }
 
@@ -143,7 +313,6 @@ impl Mapper {
         let mut node:Node = Node::default();
 
         let mut func_start = 0;
-        let mut func_end = 0;
         let mut func_index = 0;
 
         loop {
@@ -159,7 +328,6 @@ impl Mapper {
                 ParserState::BeginFunctionBody { range } => {
                     parser_input = Some(ParserInput::SkipFunctionBody);
                     func_start = range.start;
-                    func_end = range.end;
                 },
                 _ => {
                     println!("{:?}", *parser.last_state());
@@ -167,16 +335,16 @@ impl Mapper {
                 }
             }
 
-            stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
+            stdout.set_color(ColorSpec::new().set_fg(Some(Color::White)));
             println!("{:?}", *parser.last_state());
 
             func_index = parser.current_func_index;
 
             let mut reader = parser.create_validating_operator_parser();
-            let mut resources = parser.get_resources();
+            let resources = parser.get_resources();
 
-            node = self.map_helper(&mut reader, resources, func_start, func_end);
-            node.set_instrs(buf[func_start..func_end].to_vec());
+            node = self.map_helper(&mut reader, &buf, resources, func_start, func_index as usize);
+            self.functions.insert(func_index as usize, node.clone());
             nodes.insert(func_index as usize, node.clone());
         }
         let indices = self.get_indices(nodes.clone());
@@ -192,76 +360,134 @@ impl Mapper {
             println!("Analyzing function {}...", index);
             tree.remove(&index);
             let mut path_nodes = HashMap::new();
-            let node = self.expand_tree_helper(func, index, tree.clone(), path_nodes);
+            let node = self.expand_func_tree_helper(func, index, tree.clone(), path_nodes);
             tree.insert(index, node);
         }
         tree
     }
 
-    fn expand_tree_helper(&mut self, mut func:Node, func_index:usize, nodes:HashMap<usize, Node>, mut path_nodes:HashMap<usize, Node>) -> Node {
+    fn expand_block_tree_helper(&mut self, mut block:Node, node_id:usize, nodes:HashMap<usize, Node>, mut path_nodes:HashMap<usize, Node>) -> Node {
         let mut tree = nodes;
-        let calls = func.get_calls();
-        println!("Found {} calls to other functions:", calls.keys().len());
+
+        let inner_blocks = block.get_blocks();
+        println!("Found {} blocks in block {}", inner_blocks.keys().len(), node_id);
+        for (start, index) in inner_blocks {
+            let mut inner_block = self.get_block(index);
+            println!("Breaking block {} out from block {}", index, node_id);
+            let block_id = self.unique_block_id();
+            let inner_block_end = inner_block.get_end();
+            block.remove_instrs(start, inner_block_end);
+            block.add_call(start, block_id);
+            block.add_child(block_id, self.expand_block_tree_helper(inner_block.clone(), index, tree.clone(), path_nodes.clone()));
+            self.functions.insert(block_id, inner_block.clone());
+        }
+        tree.remove(&node_id);
+        tree.insert(node_id, block.clone());
+
+        let calls = block.get_calls();
+        println!("Found {} calls to other functions from block {}", calls.keys().len(), node_id);
         for (call, index) in calls {
-            if index == func_index {
-                println!("    Skipping self referencing call.");
+            if path_nodes.contains_key(&index) {
+                println!("Skipping reference loop in block {}", node_id);
+                continue;
+            }
+            if block.has_child(index){
+                println!("Skipping already registered call to function {} from block {}", index, node_id);
+                continue;
+            }
+            path_nodes.insert(node_id, block.clone());
+            println!("Registering call to function {} from block {}", index, node_id);
+            block.add_child(index, self.expand_func_tree_helper(tree[&index].clone(), index, tree.clone(), path_nodes.clone()));
+        }
+        tree.remove(&node_id);
+        tree.insert(node_id, block.clone());
+        block
+    }
+
+    fn expand_func_tree_helper(&mut self, mut func:Node, node_id:usize, nodes:HashMap<usize, Node>, mut path_nodes:HashMap<usize, Node>) -> Node {
+        let mut tree = nodes;
+
+        let blocks = func.get_blocks();
+        println!("Found {} blocks in function {}", blocks.keys().len(), node_id);
+        for (start, index) in blocks {
+            let mut block = self.get_block(index);
+            println!("Breaking block {} out from function {}", index, node_id);
+            let block_id = self.unique_block_id();
+            func.add_call(start, block_id);
+            func.add_child(block_id, self.expand_block_tree_helper(block.clone(), block_id, tree.clone(), path_nodes.clone()));
+            self.functions.insert(block_id, block.clone());
+        }
+        tree.remove(&node_id);
+        tree.insert(node_id, func.clone());
+
+        let calls = func.get_calls();
+        println!("Found {} calls to other functions from function {}", calls.keys().len(), node_id);
+        for (call, index) in calls {
+            if index == node_id {
+                println!("Skipping self referencing call in function {}", node_id);
                 continue;
             }
             if path_nodes.contains_key(&index) {
-                println!("    Skipping reference loop.");
+                println!("Skipping reference loop in function {}", node_id);
                 continue;
             }
-            if func.has_child(index){
-                println!("    Skipping already registered call to function {}.", index);
+            if func.has_child(index) {
+                println!("Skipping already registered call to function {} from function {}", index, node_id);
                 continue;
             }
-            path_nodes.insert(func_index, func.clone());
-            println!("    Registering call to function {}...", call);
-            func.add_child(self.expand_tree_helper(tree[&index].clone(), index, tree.clone(), path_nodes.clone()));
-            tree.remove(&index);
-            tree.insert(index, func.clone());
+            path_nodes.insert(node_id, func.clone());
+            println!("Registering call to function {} from function {}", index, node_id);
+            func.add_child(index, self.expand_func_tree_helper(tree[&index].clone(), index, tree.clone(), path_nodes.clone()));
         }
+        tree.remove(&node_id);
+        tree.insert(node_id, func.clone());
         func
     }
     
-    fn map_helper(&mut self, reader:&mut ValidatingOperatorParser, resources:&WasmModuleResources, func_start:usize, func_end:usize) -> Node {
+    fn map_helper(&mut self, reader:&mut ValidatingOperatorParser, buf:&Vec<u8>, resources:&WasmModuleResources, start:usize, index:usize) -> Node {
         let mut process_next_line = true;
-        let mut cont:bool = true;
         let mut i = 0;
 
         let mut stdout = StandardStream::stdout(ColorChoice::Always);
 
         let mut node:Node = Node::default();
-        let mut func_index = 0;
 
-        node.set_start(func_start);
-        node.set_end(func_end);
+        node.set_start(start);
+        node.set_id(index);
 
         loop {
             stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
             let read = reader.next(resources);
+            let position = reader.current_position();
             i += 1;
-
-            if !cont {
-                continue;
-            }
             
             if let Ok(ref op) = read {
                 match op {
-                    Operator::Unreachable => {}
+                    Operator::Unreachable => {
+                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::White)));
+                    }
                     Operator::Nop => {
+                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::White)));
                     }
                     Operator::Block { ty } => {
+                        let block_node = self.map_helper(reader, buf, resources, position, i);
+                        let block_id = self.add_block(block_node);
+                        node.add_block(position, block_id);
+                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
                     }
                     Operator::Loop { ty } => {
+                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
                     }
                     Operator::If { ty } => {
+                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
                     }
                     Operator::Else => {
+                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
                     }
-                    Operator::End
-                    | Operator::Return => {
-                        node.set_end(i);
+                    Operator::Return => {}
+                    Operator::End => {
+                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::White)));
+                        node.set_end(position + start);
                         println!("{}. {:?}", i, op);
                         break;
                     }
@@ -284,14 +510,14 @@ impl Mapper {
                         stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
                     }
                     Operator::Call { function_index } => {
-                        if !node.has_call(i) {
-                            node.add_call(i, *function_index as usize);
+                        if !node.has_call(position) {
+                            node.add_call(position, *function_index as usize);
                         }
                         stdout.set_color(ColorSpec::new().set_fg(Some(Color::Magenta)));
                     }
                     Operator::CallIndirect { index, table_index } => {
-                        if !node.has_call(i) {
-                            node.add_call(i, *table_index as usize);
+                        if !node.has_call(position) {
+                            node.add_call(position, *table_index as usize);
                         }
                         stdout.set_color(ColorSpec::new().set_fg(Some(Color::Magenta)));
                     }
@@ -314,45 +540,41 @@ impl Mapper {
                         stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
                     }
                     Operator::I32Load { ref memarg } => {
+                        let var_id = node.add_input_variable(Type::I32);
+                        node.add_data_coupling(memarg, var_id);
                         stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
                     }
                     Operator::I64Load { ref memarg } => {
+                        let var_id = node.add_input_variable(Type::I64);
+                        node.add_data_coupling(memarg, var_id);
                         stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
                     }
                     Operator::F32Load { ref memarg } => {
+                        let var_id = node.add_input_variable(Type::F32);
+                        node.add_data_coupling(memarg, var_id);
                         stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
                     }
                     Operator::F64Load { ref memarg } => {
+                        let var_id = node.add_input_variable(Type::F64);
+                        node.add_data_coupling(memarg, var_id);
                         stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
                     }
-                    Operator::I32Load8S { ref memarg } => {
+                    Operator::I32Load8S { ref memarg }
+                    | Operator::I32Load8U { ref memarg }
+                    | Operator::I32Load16S { ref memarg }
+                    | Operator::I32Load16U { ref memarg } => {
+                        let var_id = node.add_input_variable(Type::I32);
+                        node.add_data_coupling(memarg, var_id);
                         stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
                     }
-                    Operator::I32Load8U { ref memarg } => {
-                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
-                    }
-                    Operator::I32Load16S { ref memarg } => {
-                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
-                    }
-                    Operator::I32Load16U { ref memarg } => {
-                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
-                    }
-                    Operator::I64Load8S { ref memarg } => {
-                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
-                    }
-                    Operator::I64Load8U { ref memarg } => {
-                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
-                    }
-                    Operator::I64Load16S { ref memarg } => {
-                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
-                    }
-                    Operator::I64Load16U { ref memarg } => {
-                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
-                    }
-                    Operator::I64Load32S { ref memarg } => {
-                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
-                    }
-                    Operator::I64Load32U { ref memarg } => {
+                    Operator::I64Load8S { ref memarg } 
+                    | Operator::I64Load8U { ref memarg } 
+                    | Operator::I64Load16U { ref memarg }
+                    | Operator::I64Load32S { ref memarg }
+                    | Operator::I64Load32U { ref memarg }
+                    | Operator::I64Load16S { ref memarg } => {
+                        let var_id = node.add_input_variable(Type::I64);
+                        node.add_data_coupling(memarg, var_id);
                         stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
                     }
                     Operator::I32Store { ref memarg } => {
@@ -391,16 +613,20 @@ impl Mapper {
                     } => {
                     }
                     Operator::I32Const { .. } => {
-
+                        node.add_constant(Type::I32);
+                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
                     }
                     Operator::I64Const { .. } => {
-
+                        node.add_constant(Type::I64);
+                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
                     }
                     Operator::F32Const { .. } => {
-
+                        node.add_constant(Type::F32);
+                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
                     }
                     Operator::F64Const { .. } => {
-
+                        node.add_constant(Type::F64);
+                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
                     }
                     Operator::I32Eqz => {
                     }
@@ -833,10 +1059,9 @@ impl Mapper {
                 stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)));
                 panic!("Bad wasm code {:?}", read.err());
             }
-            if !process_next_line {
-                cont = false;
-            }
         }
+        let end = node.get_end();
+        node.set_instrs(buf[start..end].to_vec());
         node
     }
 }

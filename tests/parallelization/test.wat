@@ -1,14 +1,31 @@
 (module
     (func $calc (param $vi i32) (param $vf i32) (param $t i32) (param $torque i32) (param $velocity i32) (result i32)
-        (i32.div_u
-            (call $accel
-                (get_local $vf)
-                (get_local $vi)
-                (get_local $t)
+        (i32.lt_u
+            (i32.div_u
+                (call $accel
+                    (get_local $vf)
+                    (get_local $vi)
+                    (get_local $t)
+                )
+                (call $power
+                    (get_local $torque)
+                    (get_local $velocity)
+                )
             )
-            (call $power
-                (get_local $torque)
-                (get_local $velocity)
+            (get_local $torque)
+        )
+        (if (result i32)
+            (then
+                (block (result i32)
+                    (call $accel
+                        (get_local $vi)
+                        (get_local $vf)
+                        (get_local $t)
+                    )
+                )
+            )
+            (else
+                (i32.const 1)
             )
         )
     )
