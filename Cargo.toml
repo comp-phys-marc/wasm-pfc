@@ -12,13 +12,13 @@ A simple event-driven library for parsing WebAssembly binary files.
 exclude = ["fuzz/**/*", "tests/**/*"]
 
 [dependencies]
-bit-vec = "*"
 termcolor = "*"
+print-flat-tree = "*"
 
 [dev-dependencies]
 criterion = "0.2"
-bit-vec = "*"
 termcolor = "*"
+print-flat-tree = "*"
 
 [dependencies.hashmap_core]
 version = "0.1.10"

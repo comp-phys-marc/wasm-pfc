@@ -10,5 +10,12 @@ fn main() {
         return;
     }
 
-    flow_mapper::new_mapper().map(&args[1]);
+    let mut mapper = flow_mapper::new_mapper();
+
+    println!("Analyzing {}...", args[1]);
+
+    let buf: Vec<u8> = mapper.read_wasm(&args[1]).unwrap();
+    let nodes = mapper.map(buf);
+    println!("{:#?}", nodes);
+    mapper.print_tree(nodes);
 }
