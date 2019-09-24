@@ -17,10 +17,5 @@ fn main() {
     let buf: Vec<u8> = mapper.read_wasm(&args[1]).unwrap();
     let nodes = mapper.map(buf);
 
-    // println!("{:#x?}", nodes);
-    // mapper.print_tree(nodes);
-
-    let mut node = &nodes[&5];
-    let collapsed_node = node.clone().collapse();
-    println!("{:#x?}", collapsed_node);
+    println!("{:#x?}", nodes);
 }

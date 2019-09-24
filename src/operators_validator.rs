@@ -46,7 +46,7 @@ impl BlockState {
 }
 
 struct FuncState {
-    local_types: Vec<Type>,
+    pub local_types: Vec<Type>,
     blocks: Vec<BlockState>,
     stack_types: Vec<Type>,
     end_function: bool,

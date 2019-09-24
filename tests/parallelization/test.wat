@@ -44,5 +44,14 @@
             (get_local $velocity)
         )
     )
+    (func $invPower (param $torque i32) (param $velocity i32) (result i32)
+        (i32.div_u
+            (i32.const 1)
+            (i32.mul
+                (get_local $torque)
+                (get_local $velocity)
+            )
+        )
+    )
     (export "calc" (func $calc))
 )

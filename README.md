@@ -72,7 +72,7 @@ If you want to use files as seeds for the fuzzer, add them to `fuzz/corpus/parse
 To test the PFC implementation:
 
 ```
-cargo run --example parallelize  ./tests/parallelization/accel.wasm
+cargo run --example parallelize  ./tests/parallelization/test.wasm
 ```
 
 To create or update a WASM file, write the .wat by hand, and run wat2wasm. For example:
