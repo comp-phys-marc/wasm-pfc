@@ -26,8 +26,8 @@ use crate::readers::FunctionBody;
 /// operations and data types that can be understood by PyQUBO.
 #[derive(Clone, Debug)]
 pub enum PhysicalExpression {
-    Add{ operand_one: PhysicalExpression, operand_two: PhysicalExpression },
-    Mul{ operand_one: PhysicalExpression, operand_two: PhysicalExpression },
+    Add{ operand_one: Box<PhysicalExpression>, operand_two: Box<PhysicalExpression> },
+    Mul{ operand_one: Box<PhysicalExpression>, operand_two: Box<PhysicalExpression> },
     Spin{ val: bool }, // 0 represents -1
     Num{ val: usize },
     Binary{ val: bool }
@@ -51,7 +51,7 @@ pub enum AbstractExpression {
 #[derive(Clone, Debug)]
 pub struct QUBO {
     id: usize, // maps each QUBO to its node
-    expression: PhysicalExpression // low level boolean expressions
+    expression: Option<PhysicalExpression> // low level boolean expressions
 }
 
 
@@ -139,6 +139,8 @@ impl Node {
     // lowers the node's code to a representation compatible with PyQUBO
     pub fn lower(&mut self) -> QUBO {
 
+        let qubo = QUBO::default(self.id);
+
         // couplings can be made between all the types of variables
         let input_variables = self.get_input_variables(); 
         let internal_variables = self.get_internal_variables();
@@ -154,7 +156,7 @@ impl Node {
         stdin.read_line(&mut input);
         if !(input == "no\n" || input == "n\n") {
 
-            for (i, operation) in self.operations {
+            for (i, operation) in self.get_operations() {
 
                 match operation {
                     AbstractExpression::Add{ ty: Type::I32 } => {
@@ -163,45 +165,75 @@ impl Node {
                         let mut operand_two:AbstractExpression;
                         let mut var_id:usize = 0;
 
-                        match self.operations[i - 1] {
+                        match self.operations[&(i - 1)] {
                             AbstractExpression::Spin { id }=> {
+                                let ty = input_variables[&id];
                                 if !(ty == Type::I32) {
                                     panic!("Invalid operand for I32 addition near line {}!", i - 1);
                                 } else {
                                     var_id = id;
                                 }
                             }
+                            AbstractExpression::Add { ty: Type::I32 } => {
+                                // TODO
+                            }
+                            AbstractExpression::Mul { ty: Type::I32 } => {
+                                // TODO
+                            }
+                            _ => {
+                                panic!("Unsupported operation encountered!");
+                            }
                         }
 
-                        match self.operations[i - 2] {
-                            AbstractExpression::Spin { id }=> {
+                        match self.operations[&(i - 2)] {
+                            AbstractExpression::Spin { id } => {
+                                let ty = input_variables[&id];
                                 if !(ty == Type::I32) {
                                     panic!("Invalid operand for I32 addition near line {}!", i - 2);
                                 } else {
                                     var_id = id;
                                 }
                             }
+                            AbstractExpression::Add { ty: Type::I32 } => {
+                                // TODO
+                            }
+                            AbstractExpression::Mul { ty: Type::I32 } => {
+                                // TODO
+                            }
+                            _ => {
+                                panic!("Unsupported operation encountered!");
+                            }
                         }
 
                         match internal_variables.get(&i) {
                             Some(internal) => {
-                                if *internal == var_id && self.has_child(i) {
-                                    let child = self.get_child(i);
-                                    let child_variables = child.get_input_variables();
-                                    let coupled_var = self.get_flow_control_couplings()[var_id];
-                                    let child_var = child_variables[coupled_var];
+                                if *internal == Type::I32 && self.has_child(i) {
+                                    match self.get_child(i) {
+                                        Some(mut child) => {
+                                            let child_id = child.get_id();
+                                            let child_variables = child.get_input_variables();
+                                            let coupled_var = self.get_flow_control_couplings()[&var_id];
+                                            let child_var = child_variables[&coupled_var];
 
-                                    // ask the user if they would like to lower the nested node
-                                    let mut stdin = io::stdin();
-                                    let mut input = String::new();
-                                    println!("Do you want to lower the nested node {} (yes/no)?", child.id);
-                                    stdin.read_line(&mut input);
-                                    if !(input == "no\n" || input == "n\n") {
-                                        let sub_expression = child.lower();
-                                    } else {
-                                        let sub_expression = QUBO::default(child.id);
+                                            // ask the user if they would like to lower the nested node
+                                            let mut stdin = io::stdin();
+                                            let mut input = String::new();
+                                            println!("Do you want to lower the nested node {} (yes/no)?", child_id);
+                                            stdin.read_line(&mut input);
+                                            if !(input == "no\n" || input == "n\n") {
+                                                let sub_expression = child.lower();
+                                            } else {
+                                                let sub_expression = QUBO::default(child_id);
+                                    }
+                                        }
+                                        _ => {
+                                            panic!("Incomplete flow control coupling encountered!");
+                                        }
                                     }
                                 }
+                            }
+                            None => {
+                                panic!("Incomplete flow control coupling encountered!");
                             }
                         }
                     }
@@ -226,11 +258,13 @@ impl Node {
                     AbstractExpression::Mul{ ty: Type::F64 } => {
                         
                     }
+                    _ => {
+                        continue;
+                    }
                 }
             }
-
-            self.clone()
         }
+        qubo
     }
 
     // sets the node id
@@ -238,29 +272,34 @@ impl Node {
         self.id = id;
     }
 
+    // returns the node id
+    pub fn get_id(&self) -> usize {
+        self.id.clone()
+    }
+
     // registers an internal variable of any kind
     pub fn add_internal_variable(&mut self, i:usize, ty:Type) -> usize {
         self.internal_variables.insert(i, ty);
-        i - 1
+        i
     }
 
     // registers an input variable of any kind
     pub fn add_input_variable(&mut self, ty:Type) -> usize {
-        let var_id = self.id + self.input_variables.len();
+        let var_id = self.input_variables.len();
         self.input_variables.insert(var_id, ty);
         var_id
     }
 
     // registers an output variable of any kind
     pub fn add_output_variable(&mut self, ty:Type) -> usize {
-        let var_id = self.id + self.output_variables.len();
+        let var_id = self.output_variables.len();
         self.output_variables.insert(var_id, ty);
         var_id
     }
 
     // registers a locally scoped constant
     pub fn add_constant(&mut self, ty:Type) -> usize {
-        let var_id = self.id + 1 + self.constants.len();
+        let var_id = self.constants.len();
         self.constants.insert(var_id, ty);
         var_id
     }
@@ -268,6 +307,11 @@ impl Node {
     // registers a simulatable operation
      pub fn add_operation(&mut self, i:usize, op:AbstractExpression) {
         self.operations.insert(i, op);
+    }
+
+    // returns the registered simulatable operations
+     pub fn get_operations(&self) -> HashMap<usize, AbstractExpression> {
+        self.operations.clone()
     }
 
     // registers an internal data coupling for flow control simulation
@@ -648,6 +692,9 @@ impl Mapper {
         // loop until we reach the end of the input WASM code
         loop {
 
+            node = Node::default();
+            node.set_id(func_index as usize);
+
             // white is for non-significant printout that does not represent a simulatable 
             // operation or control flow instruction
             stdout.set_color(ColorSpec::new().set_fg(Some(Color::White)));
@@ -695,11 +742,12 @@ impl Mapper {
             // the parser has information about globals and keeps track of each function's type signature
             let resources = parser.get_resources();
 
+            // find and attach the function signature before processing the body so we can access its parameter info
+            node = self.attach_signature(resources, node.clone(), func_count, func_types.clone());
+
             // the map helper will use the validating operator parser to recursively process the function
             // body and create a corresponding node
             node = self.map_helper(&mut reader, &buf, resources, func_start, func_index as usize, node.clone());
-
-            node = self.attach_signature(resources, node.clone(), func_count, func_types.clone());
 
             // register the encountered function and corresponding processed node
             self.nodes.insert(func_index as usize, node.clone());
@@ -943,7 +991,7 @@ impl Mapper {
                         node.add_block(i, block_id);
 
                         stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
-                        print!("==== End of: ")
+                        print!("==== End of: ");
                     }
                     Operator::Loop { ty } => {
 
@@ -1082,9 +1130,9 @@ impl Mapper {
                         // TODO 
                     }
                     Operator::GetLocal { local_index } => {
-                        let local_vars = self.get_input_variables();
-                        let var_id = self.id + local_index;
-                        let var_type = local_vars[var_id];
+                        let local_vars = node.get_input_variables();
+                        let var_id = *local_index as usize;
+                        let var_type = local_vars[&var_id];
                         node.add_operation(i, AbstractExpression::Spin{ id: var_id });
                         stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)));
                     }

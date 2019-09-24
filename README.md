@@ -67,18 +67,24 @@ If you want to use files as seeds for the fuzzer, add them to `fuzz/corpus/parse
 
 [cargo-fuzz]: https://github.com/rust-fuzz/cargo-fuzz
 
-## PFC
+## QuantEmu
 
 To test the PFC implementation:
 
 ```
-cargo run --example parallelize  ./tests/parallelization/test.wasm
+cargo run --example parallelize  ./tests/parallelization/math.wasm
 ```
 
 To create or update a WASM file, write the .wat by hand, and run wat2wasm. For example:
 
 ```
-wat2wasm tests/parallelization/accel.wat -o tests/parallelization/accel.wasm
+wat2wasm tests/parallelization/math.wat -o tests/parallelization/math.wasm
+```
+
+To enable verbose stack trace debugging, export this variable before running the program:
+
+```
+export RUST_BACKTRACE=1
 ```
 
 wat2wasm is a part of the open source WebAssembly Binary Toolkit [wabt](https://github.com/WebAssembly/wabt).
