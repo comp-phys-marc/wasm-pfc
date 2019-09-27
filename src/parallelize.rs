@@ -46,19 +46,19 @@ pub enum AbstractExpression {
 }
 
 
-/// A QUBO represents a nestable quantum unconstrained
+/// A Constraint represents a nestable quantum unconstrained
 /// boolean optimization problem expression.
 #[derive(Clone, Debug)]
-pub struct QUBO {
-    id: usize, // maps each QUBO to its node
+pub struct Constraint {
+    id: usize, // maps each Constraint to its node
     expression: Option<PhysicalExpression> // low level boolean expressions
 }
 
 
-impl QUBO {
-    fn default (node_id:usize) -> QUBO {
+impl Constraint {
+    fn default (node_id:usize) -> Constraint {
 
-        QUBO {
+        Constraint {
             id: node_id,
             expression: None
         }
@@ -80,14 +80,15 @@ pub struct Node {
     end: usize, // where the node's insturctions end in the WASM source file
     children: HashMap<usize, Node>, // calls to other functions, or internal blocks of code
     constants: HashMap<usize, Type>, // constants instantiated within the scope of the node
+    chains: HashMap<usize, Type>, // whether the spins at indeces i are coupled via chaining or anti-chaining
     internal_variables: HashMap<usize, Type>, // internal variables that will be used to simulate flow control
     input_variables: HashMap<usize, Type>, // all input variables including parameters, memory references, global references are given ids
     output_variables: HashMap<usize, Type>, // all output varibles including writes to memory and returns
-    global_input_data_couplings: HashMap<usize, usize>, // map of global variable locations to the Spind node's input variable ids
-    global_output_data_couplings: HashMap<usize, usize>, // map of global variable locations to the Spind node's output variable ids
-    flow_control_couplings: HashMap<usize, usize>, // map of instruction locations to Spind flow control variable ids
-    input_data_couplings: HashMap<usize, usize>, // map of memory locations to the Spind node's input variable ids
-    output_data_couplings: HashMap<usize, usize>, // map of memory locations to the Spind node's output variable ids
+    global_input_data_couplings: HashMap<usize, usize>, // map of global variable locations to the coupled node's input variable ids
+    global_output_data_couplings: HashMap<usize, usize>, // map of global variable locations to the coupled node's output variable ids
+    flow_control_couplings: HashMap<usize, usize>, // map of instruction locations to coupled flow control variable ids
+    input_data_couplings: HashMap<usize, usize>, // map of memory locations to the coupled node's input variable ids
+    output_data_couplings: HashMap<usize, usize>, // map of memory locations to the coupled node's output variable ids
     blocks: HashMap<usize, usize>, // internal blocks' locations mapped to their ids as maintained by the mapper
     operations: HashMap<usize, AbstractExpression> // simulatable operations
 }
@@ -107,6 +108,7 @@ impl Node {
         let input_variables = HashMap::new();
         let output_variables = HashMap::new();
         let constants = HashMap::new();
+        let chains = HashMap::new();
         let flow_control_couplings = HashMap::new();
         let input_data_couplings = HashMap::new();
         let output_data_couplings = HashMap::new();
@@ -127,6 +129,7 @@ impl Node {
             input_variables: input_variables,
             output_variables: output_variables,
             constants: constants,
+            chains: chains,
             flow_control_couplings: flow_control_couplings,
             input_data_couplings: input_data_couplings,
             output_data_couplings: output_data_couplings,
@@ -137,9 +140,9 @@ impl Node {
     }
 
     // lowers the node's code to a representation compatible with PyQUBO
-    pub fn lower(&mut self) -> QUBO {
+    pub fn lower(&mut self) -> Constraint {
 
-        let qubo = QUBO::default(self.id);
+        let constraint = Constraint::default(self.id);
 
         // couplings can be made between all the types of variables
         let input_variables = self.get_input_variables(); 
@@ -223,7 +226,7 @@ impl Node {
                                             if !(input == "no\n" || input == "n\n") {
                                                 let sub_expression = child.lower();
                                             } else {
-                                                let sub_expression = QUBO::default(child_id);
+                                                let sub_expression = Constraint::default(child_id);
                                     }
                                         }
                                         _ => {
@@ -264,7 +267,7 @@ impl Node {
                 }
             }
         }
-        qubo
+        constraint
     }
 
     // sets the node id
@@ -315,7 +318,8 @@ impl Node {
     }
 
     // registers an internal data coupling for flow control simulation
-    pub fn add_flow_control_coupling(&mut self, i:usize, var_id:usize) {
+    pub fn add_flow_control_coupling(&mut self, i:usize, var_id:usize, chain:bool) {
+        self.chains.insert(i, chain);
         self.flow_control_couplings.insert(i, var_id);
     }
 
@@ -426,7 +430,7 @@ impl Node {
         coupling
     }
 
-    // checks if the variables with the given id is Spind to any global or memory dependency
+    // checks if the variables with the given id is coupled to any global or memory dependency
     pub fn input_variable_is_param(&self, var_id:usize) -> bool {
         let mut param = true;
 
@@ -1021,7 +1025,7 @@ impl Mapper {
 
                         // create data coupling to simulate flow control
                         let inner_var_id = conditional_node.add_input_variable(*ty);
-                        conditional_node.add_flow_control_coupling(outer_var_id, inner_var_id);
+                        conditional_node.add_flow_control_coupling(outer_var_id, inner_var_id, true);
                         
                         conditional_node = self.map_helper(reader, buf, resources, position, i, conditional_node);
 
@@ -1059,14 +1063,14 @@ impl Mapper {
                             println!("{}. {:?}", i, op);
 
                             // get coupling details from the if condition details
-                            let Spind_var_id = node.get_first_flow_control_coupling();
+                            let coupled_var_id = node.get_first_flow_control_coupling();
                             let input_type = node.get_first_input_variable();
 
                             let mut else_node = Node::default();
 
                             // create data anti-chain coupling to simulate flow control
                             let inner_var_id = else_node.add_input_variable(input_type);
-                            else_node.add_flow_control_coupling(Spind_var_id, inner_var_id);
+                            else_node.add_flow_control_coupling(coupled_var_id, inner_var_id, false);
 
                             else_node = self.map_helper(reader, buf, resources, position, i, else_node);
 
